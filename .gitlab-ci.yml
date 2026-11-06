@@ -1,19 +1,73 @@
+# TP11 : pipeline GitLab complété
+
 stages:
   - install
   - test
+  - security
+  - build
+  - push
+
+default:
+  image: node:24-alpine
+  tags: [lab] # les jobs s'exécutent sur VOTRE runner (VM de lab)
+  interruptible: true # Interrompt le pipeline si un nouveau commit arrive
+
+variables:
+  npm_config_cache: "$CI_PROJECT_DIR/.npm"
+
+# Inclusion des templates de sécurité GitLab
+include:
+  - template: Jobs/SAST.gitlab-ci.yml
+  - template: Jobs/Secret-Detection.gitlab-ci.yml
 
 install:
   stage: install
-  image: node:24-alpine
-  tags:
-    - lab
   script:
-    - npm install
+    - npm ci
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+  artifacts:
+    paths:
+      - node_modules/
+    expire_in: 1 hour
 
-test:
+unit-tests:
   stage: test
-  image: node:24-alpine
-  tags:
-    - lab
+  needs: [install]
   script:
-    - npm test
+    - npx vitest run --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml
+  artifacts:
+    when: always
+    reports:
+      junit: reports/junit.xml
+
+npm-audit:
+  stage: security
+  needs: [install]
+  script:
+    - npm audit --audit-level=high
+  allow_failure: true # On autorise l'échec pour ne pas bloquer le build si une dépendance a une CVE (dans un vrai projet, on corrigerait)
+
+build-image:
+  stage: build
+  image: docker:28
+  needs: [unit-tests, npm-audit]
+  script:
+    - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" .
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+push-image:
+  stage: push
+  image: docker:28
+  needs: [build-image]
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
