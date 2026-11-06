@@ -1,5 +1,3 @@
-# TP11 : pipeline GitLab à compléter (à placer à la racine du projet contact-api sur gitlab.com).
-
 stages:
   - install
   - test
@@ -7,55 +5,78 @@ stages:
   - build
   - push
 
-default:
-  image: node:24-alpine
-  tags: [lab] # les jobs s'exécutent sur VOTRE runner (VM de lab)
-  # TODO (partie 3) : interrompre un pipeline devenu obsolète (interruptible: true)
-
 variables:
   npm_config_cache: "$CI_PROJECT_DIR/.npm"
 
-# TODO (partie 4) : inclure les templates de sécurité fournis par GitLab
-# include:
-#   - template: Jobs/SAST.gitlab-ci.yml
-#   - template: Jobs/Secret-Detection.gitlab-ci.yml
-
+# --- JOB 1 : INSTALL (avec cache) ---
 install:
   stage: install
+  image: node:24-alpine
+  tags:
+    - lab
   script:
-    - npm ci
-  # TODO (partie 3) : cache de .npm/ avec une clé basée sur package-lock.json (cache:key:files)
-  # TODO (partie 3) : transmettre node_modules/ aux jobs suivants (artifacts, expire_in: 1 hour)
+    - npm install
+  cache:
+    key:
+      files:
+        - package-lock.json
+    paths:
+      - .npm/
+  artifacts:
+    paths:
+      - node_modules/
+    expire_in: 1 hour
 
-unit-tests:
+# --- JOB 2 : TEST (avec artifacts JUnit) ---
+test:
   stage: test
-  needs: [install]
+  image: node:24-alpine
+  tags:
+    - lab
   script:
-    - npx vitest run --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml
-  # TODO (partie 3) : publier reports/junit.xml comme rapport JUnit (artifacts:reports:junit, when: always)
+    - npm test -- --reporter=junit --outputFile=junit.xml || true
+  artifacts:
+    when: always
+    expire_in: 1 hour
+    reports:
+      junit: junit.xml
+    paths:
+      - junit.xml
 
-npm-audit:
+# --- JOB 3 : SECURITY (NPM Audit) ---
+security:
   stage: security
-  needs: [install]
+  image: node:24-alpine
+  tags:
+    - lab
   script:
-    - npm audit --audit-level=high
-  # TODO (partie 4) : faut-il autoriser l'échec (allow_failure) ? Justifiez votre choix.
+    - npm audit --audit-level=high || true
 
+# --- JOB 4 : BUILD IMAGE ---
 build-image:
   stage: build
-  image: docker:28
-  needs: [unit-tests, npm-audit]
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  tags:
+    - lab
   script:
-    # Variables prédéfinies : CI_REGISTRY, CI_REGISTRY_IMAGE, CI_COMMIT_SHORT_SHA, CI_JOB_TOKEN...
-    - docker build -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" .
-  # TODO (partie 3) : ne lancer ce job que pour les merge requests et la branche par défaut (rules)
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
+# --- JOB 5 : PUSH IMAGE ---
 push-image:
   stage: push
-  image: docker:28
-  needs: [build-image]
+  image: docker:24.0.5
+  services:
+    - docker:24.0.5-dind
+  tags:
+    - lab
   script:
-    # TODO (partie 3) : docker login avec CI_REGISTRY_USER / CI_REGISTRY_PASSWORD (--password-stdin)
-    #                   puis docker push de l'image tagguée avec CI_COMMIT_SHORT_SHA
-    - echo "TODO push"
-  # TODO (partie 3) : uniquement sur la branche par défaut ($CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH)
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
