@@ -1,14 +1,7 @@
 stages:
   - install
   - test
-  - security
-  - build
-  - push
 
-variables:
-  npm_config_cache: "$CI_PROJECT_DIR/.npm"
-
-# --- JOB 1 : INSTALL (avec cache) ---
 install:
   stage: install
   image: node:24-alpine
@@ -16,67 +9,11 @@ install:
     - lab
   script:
     - npm install
-  cache:
-    key:
-      files:
-        - package-lock.json
-    paths:
-      - .npm/
-  artifacts:
-    paths:
-      - node_modules/
-    expire_in: 1 hour
 
-# --- JOB 2 : TEST (avec artifacts JUnit) ---
 test:
   stage: test
   image: node:24-alpine
   tags:
     - lab
   script:
-    - npm test -- --reporter=junit --outputFile=junit.xml || true
-  artifacts:
-    when: always
-    expire_in: 1 hour
-    reports:
-      junit: junit.xml
-    paths:
-      - junit.xml
-
-# --- JOB 3 : SECURITY (NPM Audit) ---
-security:
-  stage: security
-  image: node:24-alpine
-  tags:
-    - lab
-  script:
-    - npm audit --audit-level=high || true
-
-# --- JOB 4 : BUILD IMAGE ---
-build-image:
-  stage: build
-  image: docker:24.0.5
-  services:
-    - docker:24.0.5-dind
-  tags:
-    - lab
-  script:
-    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
-  rules:
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-
-# --- JOB 5 : PUSH IMAGE ---
-push-image:
-  stage: push
-  image: docker:24.0.5
-  services:
-    - docker:24.0.5-dind
-  tags:
-    - lab
-  script:
-    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
-    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA .
-    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
-  rules:
-    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - npm test
